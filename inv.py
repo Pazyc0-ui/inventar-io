@@ -34,6 +34,12 @@ class InventarioApp:
         tk.Button(self.frame_izq, text="Guardar CSV", font=self.fuente, bg=btn_color, fg=btn_fg,
                   relief="raised", bd=3, command=self.guardar_csv).pack(pady=5, fill=tk.X)
 
+        # === NOMBRE DEL ARCHIVO ACTUAL ===
+        self.nombre_archivo = tk.StringVar()
+        self.nombre_archivo.set("Archivo cargado: Ninguno")
+        tk.Label(self.frame_izq, textvariable=self.nombre_archivo, font=self.fuente,
+                 bg=bg_color, fg="black").pack(pady=5, fill=tk.X)
+
         # === ETIQUETA DE ÚLTIMO PRODUCTO MODIFICADO ===
         self.texto_ultimo = tk.StringVar()
         self.texto_ultimo.set("Último producto modificado: Ninguno")
@@ -83,6 +89,8 @@ class InventarioApp:
             self.archivo_actual = posibles[0]
             try:
                 self.df = pd.read_csv(self.archivo_actual, encoding='latin1')
+                self.nombre_archivo.set(f"Archivo cargado: {os.path.basename(self.archivo_actual)}")
+                self.root.title(f"Toma de Inventarios - {os.path.basename(self.archivo_actual)}")
                 messagebox.showinfo("Carga automática", f"Archivo '{self.archivo_actual}' cargado.")
                 self.lista_resultados.delete(0, tk.END)
             except Exception as e:
@@ -94,6 +102,8 @@ class InventarioApp:
             try:
                 self.df = pd.read_csv(archivo, encoding='latin1')
                 self.archivo_actual = archivo
+                self.nombre_archivo.set(f"Archivo cargado: {os.path.basename(self.archivo_actual)}")
+                self.root.title(f"Toma de Inventarios - {os.path.basename(self.archivo_actual)}")
                 self.lista_resultados.delete(0, tk.END)
                 messagebox.showinfo("Carga exitosa", "Archivo CSV cargado correctamente.")
             except Exception as e:
@@ -113,9 +123,23 @@ class InventarioApp:
     def buscar_producto(self, event=None):
         if self.df is None:
             return
-        query = self.entrada_busqueda.get().lower()
-        resultados = self.df[self.df.iloc[:,1].astype(str).str.lower().str.contains(query)]
+        query = self.entrada_busqueda.get().strip().lower()
         self.lista_resultados.delete(0, tk.END)
+
+        if query == "":
+            return
+
+        # Coincidencia exacta por código (columna 0)
+        exactos = self.df[self.df.iloc[:, 0].astype(str).str.lower() == query]
+
+        # Coincidencia parcial por nombre (columna 1)
+        parciales = self.df[self.df.iloc[:, 1].astype(str).str.lower().str.contains(query)]
+
+        # Eliminar duplicados
+        parciales = parciales[~parciales.index.isin(exactos.index)]
+
+        resultados = pd.concat([exactos, parciales])
+
         for i, row in resultados.iterrows():
             self.lista_resultados.insert(tk.END, f"{i} - {row[1]}")
 
@@ -141,7 +165,6 @@ class InventarioApp:
             self.entrada_busqueda.focus_set()
             self.entrada_busqueda.select_range(0, tk.END)
 
-
     def mostrar_detalles(self, event=None):
         if not self.lista_resultados.curselection():
             return
@@ -154,7 +177,7 @@ class InventarioApp:
                 f"\nCantidad Total: {fila[3]}\nCantidad Teórica: {fila[4]}"
             )
             self.entrada_cantidad.delete(0, tk.END)
-            self.entrada_cantidad.insert(0, str(fila[3]))
+            self.entrada_cantidad.insert(0, "0")  # inicia en 0
         except Exception as e:
             messagebox.showerror("Error al mostrar detalles", str(e))
 

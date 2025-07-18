@@ -10,6 +10,9 @@ class InventarioApp:
         self.df = None
         self.archivo_actual = None
         self.indice_actual = None
+        self.contadores = {}
+        self.productos_modificados = set()
+        self.historial_undo = []
 
         # === ESTILO GENERAL ===
         self.fuente = ("Courier New", 10)
@@ -46,6 +49,11 @@ class InventarioApp:
         tk.Label(self.frame_izq, textvariable=self.texto_ultimo, font=self.fuente,
                  bg="#d1ecf1", fg="#004085", relief="groove", bd=2, padx=5, pady=5).pack(pady=5, fill=tk.X)
 
+        self.contador_modificados = tk.StringVar()
+        self.contador_modificados.set("Productos modificados: 0")
+        tk.Label(self.frame_izq, textvariable=self.contador_modificados,
+                 font=self.fuente, bg="#fff3cd", fg="#856404", relief="groove", bd=2, padx=5, pady=5).pack(pady=5, fill=tk.X)
+
         self.lista_resultados = tk.Listbox(self.frame_izq, height=15, width=60, font=self.fuente,
                                            bg=list_bg, bd=2, relief="sunken")
         self.lista_resultados.pack(pady=5)
@@ -69,6 +77,10 @@ class InventarioApp:
         tk.Button(frame_botones_cantidad, text="Actualizar Cantidad", font=self.fuente,
                   bg=btn_color, fg=btn_fg, relief="raised", bd=3,
                   command=self.actualizar_cantidad).pack(side=tk.LEFT, padx=5)
+
+        tk.Button(self.frame_izq, text="Deshacer Último Cambio", font=self.fuente,
+                  bg="#dc3545", fg="white", relief="raised", bd=3,
+                  command=self.deshacer_ultimo).pack(pady=5, fill=tk.X)
 
         # === BÚSQUEDA DERECHA ===
         tk.Label(self.frame_der, text="Buscar producto:", bg=bg_color, font=self.fuente).pack()
@@ -129,19 +141,16 @@ class InventarioApp:
         if query == "":
             return
 
-        # Coincidencia exacta por código (columna 0)
         exactos = self.df[self.df.iloc[:, 0].astype(str).str.lower() == query]
-
-        # Coincidencia parcial por nombre (columna 1)
         parciales = self.df[self.df.iloc[:, 1].astype(str).str.lower().str.contains(query)]
-
-        # Eliminar duplicados
         parciales = parciales[~parciales.index.isin(exactos.index)]
-
         resultados = pd.concat([exactos, parciales])
 
         for i, row in resultados.iterrows():
-            self.lista_resultados.insert(tk.END, f"{i} - {row[1]}")
+            display = f"{i} - {row[1]}"
+            self.lista_resultados.insert(tk.END, display)
+            if row[0] in self.productos_modificados:
+                self.lista_resultados.itemconfig(tk.END, {'bg': '#d4edda'})
 
     def seleccionar_primer_resultado(self, event=None):
         if self.lista_resultados.size() > 0:
@@ -151,12 +160,20 @@ class InventarioApp:
             self.mostrar_detalles()
 
             try:
-                actual = int(self.df.at[self.indice_actual, self.df.columns[3]])
-                nuevo_valor = actual + 1
-                self.df.at[self.indice_actual, self.df.columns[3]] = nuevo_valor
-                self.guardar_csv()
-                fila = self.df.loc[self.indice_actual]
-                self.actualizar_ultimo_producto(fila)
+                codigo = self.df.at[self.indice_actual, self.df.columns[0]]
+
+                if codigo not in self.contadores:
+                    self.contadores[codigo] = 1
+                else:
+                    self.contadores[codigo] += 1
+                    anterior = int(self.df.at[self.indice_actual, self.df.columns[3]])
+                    self.historial_undo.append((self.indice_actual, anterior))
+                    nuevo_valor = anterior + 1
+                    self.df.at[self.indice_actual, self.df.columns[3]] = nuevo_valor
+                    self.guardar_csv()
+                    fila = self.df.loc[self.indice_actual]
+                    self.actualizar_ultimo_producto(fila)
+
             except Exception as e:
                 messagebox.showerror("Error al sumar", str(e))
 
@@ -177,7 +194,7 @@ class InventarioApp:
                 f"\nCantidad Total: {fila[3]}\nCantidad Teórica: {fila[4]}"
             )
             self.entrada_cantidad.delete(0, tk.END)
-            self.entrada_cantidad.insert(0, "0")  # inicia en 0
+            self.entrada_cantidad.insert(0, "0")
         except Exception as e:
             messagebox.showerror("Error al mostrar detalles", str(e))
 
@@ -186,6 +203,8 @@ class InventarioApp:
             return
         nueva_cantidad = self.entrada_cantidad.get()
         try:
+            anterior = int(self.df.at[self.indice_actual, self.df.columns[3]])
+            self.historial_undo.append((self.indice_actual, anterior))
             self.df.at[self.indice_actual, self.df.columns[3]] = int(nueva_cantidad)
             self.guardar_csv()
             self.mostrar_detalles()
@@ -193,7 +212,6 @@ class InventarioApp:
             self.actualizar_ultimo_producto(fila)
             self.entrada_busqueda.focus_set()
             self.entrada_busqueda.select_range(0, tk.END)
-
         except ValueError:
             messagebox.showerror("Error", "Cantidad inválida. Introduce un número entero.")
 
@@ -205,6 +223,7 @@ class InventarioApp:
         try:
             cantidad_adicional = int(cantidad_adicional)
             actual = int(self.df.at[self.indice_actual, self.df.columns[3]])
+            self.historial_undo.append((self.indice_actual, actual))
             self.df.at[self.indice_actual, self.df.columns[3]] = actual + cantidad_adicional
             self.guardar_csv()
             messagebox.showinfo("Cantidad sumada", f"Se sumaron {cantidad_adicional} unidades.")
@@ -214,15 +233,28 @@ class InventarioApp:
             self.actualizar_ultimo_producto(fila)
             self.entrada_busqueda.focus_set()
             self.entrada_busqueda.select_range(0, tk.END)
-
         except ValueError:
             messagebox.showerror("Error", "Introduce una cantidad válida para sumar.")
+
+    def deshacer_ultimo(self):
+        if not self.historial_undo:
+            messagebox.showinfo("Deshacer", "No hay cambios para deshacer.")
+            return
+        idx, valor_anterior = self.historial_undo.pop()
+        self.df.at[idx, self.df.columns[3]] = valor_anterior
+        self.guardar_csv()
+        fila = self.df.loc[idx]
+        self.actualizar_ultimo_producto(fila)
+        messagebox.showinfo("Deshacer", f"Se restauró el producto {fila[0]} a cantidad {valor_anterior}")
 
     def actualizar_ultimo_producto(self, fila):
         try:
             self.texto_ultimo.set(
                 f"Modificado: {fila[0]} - {fila[1]} | Cantidad: {fila[3]}"
             )
+            codigo = fila[0]
+            self.productos_modificados.add(codigo)
+            self.contador_modificados.set(f"Productos modificados: {len(self.productos_modificados)}")
         except:
             self.texto_ultimo.set("Último producto modificado: (Error de datos)")
 

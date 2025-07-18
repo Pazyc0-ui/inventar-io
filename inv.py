@@ -13,11 +13,11 @@ class InventarioApp:
 
         # === ESTILO GENERAL ===
         self.fuente = ("Courier New", 10)
-        bg_color = "#cce7ff"        # Azul claro tipo retro
-        btn_color = "#004080"       # Azul oscuro
-        btn_fg = "white"            # Texto blanco para contraste
-        entry_bg = "#e6f0ff"        # Azul muy claro
-        list_bg = "#f0f8ff"         # Azul hielo
+        bg_color = "#cce7ff"
+        btn_color = "#004080"
+        btn_fg = "white"
+        entry_bg = "#e6f0ff"
+        list_bg = "#f0f8ff"
 
         self.root.configure(bg=bg_color)
 
@@ -30,8 +30,15 @@ class InventarioApp:
         # === BOTONES IZQUIERDA ===
         tk.Button(self.frame_izq, text="Cargar CSV", font=self.fuente, bg=btn_color, fg=btn_fg,
                   relief="raised", bd=3, command=self.cargar_csv).pack(pady=5, fill=tk.X)
+
         tk.Button(self.frame_izq, text="Guardar CSV", font=self.fuente, bg=btn_color, fg=btn_fg,
                   relief="raised", bd=3, command=self.guardar_csv).pack(pady=5, fill=tk.X)
+
+        # === ETIQUETA DE ÚLTIMO PRODUCTO MODIFICADO ===
+        self.texto_ultimo = tk.StringVar()
+        self.texto_ultimo.set("Último producto modificado: Ninguno")
+        tk.Label(self.frame_izq, textvariable=self.texto_ultimo, font=self.fuente,
+                 bg="#d1ecf1", fg="#004085", relief="groove", bd=2, padx=5, pady=5).pack(pady=5, fill=tk.X)
 
         self.lista_resultados = tk.Listbox(self.frame_izq, height=15, width=60, font=self.fuente,
                                            bg=list_bg, bd=2, relief="sunken")
@@ -118,7 +125,22 @@ class InventarioApp:
             self.lista_resultados.selection_set(0)
             self.lista_resultados.activate(0)
             self.mostrar_detalles()
-            self.entrada_cantidad.focus_set()
+
+            try:
+                actual = int(self.df.at[self.indice_actual, self.df.columns[3]])
+                nuevo_valor = actual + 1
+                self.df.at[self.indice_actual, self.df.columns[3]] = nuevo_valor
+                self.guardar_csv()
+                fila = self.df.loc[self.indice_actual]
+                self.actualizar_ultimo_producto(fila)
+            except Exception as e:
+                messagebox.showerror("Error al sumar", str(e))
+
+            self.lista_resultados.delete(0, tk.END)
+            self.texto_detalle.set("")
+            self.entrada_busqueda.focus_set()
+            self.entrada_busqueda.select_range(0, tk.END)
+
 
     def mostrar_detalles(self, event=None):
         if not self.lista_resultados.curselection():
@@ -143,8 +165,12 @@ class InventarioApp:
         try:
             self.df.at[self.indice_actual, self.df.columns[3]] = int(nueva_cantidad)
             self.guardar_csv()
-            messagebox.showinfo("Actualizado", "Cantidad total actualizada.")
             self.mostrar_detalles()
+            fila = self.df.loc[self.indice_actual]
+            self.actualizar_ultimo_producto(fila)
+            self.entrada_busqueda.focus_set()
+            self.entrada_busqueda.select_range(0, tk.END)
+
         except ValueError:
             messagebox.showerror("Error", "Cantidad inválida. Introduce un número entero.")
 
@@ -161,8 +187,21 @@ class InventarioApp:
             messagebox.showinfo("Cantidad sumada", f"Se sumaron {cantidad_adicional} unidades.")
             self.entrada_cantidad.delete(0, tk.END)
             self.mostrar_detalles()
+            fila = self.df.loc[self.indice_actual]
+            self.actualizar_ultimo_producto(fila)
+            self.entrada_busqueda.focus_set()
+            self.entrada_busqueda.select_range(0, tk.END)
+
         except ValueError:
             messagebox.showerror("Error", "Introduce una cantidad válida para sumar.")
+
+    def actualizar_ultimo_producto(self, fila):
+        try:
+            self.texto_ultimo.set(
+                f"Modificado: {fila[0]} - {fila[1]} | Cantidad: {fila[3]}"
+            )
+        except:
+            self.texto_ultimo.set("Último producto modificado: (Error de datos)")
 
     def abrir_formulario_producto(self):
         if self.df is None:

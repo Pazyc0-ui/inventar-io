@@ -14,7 +14,7 @@ class InventarioApp:
         self.productos_modificados = set()
         self.historial_undo = []
 
-        # === ESTILO GENERAL ===
+        # === ESTILO ===
         self.fuente = ("Courier New", 10)
         bg_color = "#cce7ff"
         btn_color = "#004080"
@@ -23,17 +23,14 @@ class InventarioApp:
         list_bg = "#f0f8ff"
 
         self.root.configure(bg=bg_color)
-
         self.frame_izq = tk.Frame(root, padx=10, pady=10, bg=bg_color)
         self.frame_izq.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
         self.frame_der = tk.Frame(root, padx=10, pady=10, bg=bg_color)
         self.frame_der.pack(side=tk.RIGHT, fill=tk.Y)
 
         # === BOTONES IZQUIERDA ===
         tk.Button(self.frame_izq, text="Cargar CSV", font=self.fuente, bg=btn_color, fg=btn_fg,
                   relief="raised", bd=3, command=self.cargar_csv).pack(pady=5, fill=tk.X)
-
         tk.Button(self.frame_izq, text="Guardar CSV", font=self.fuente, bg=btn_color, fg=btn_fg,
                   relief="raised", bd=3, command=self.guardar_csv).pack(pady=5, fill=tk.X)
 
@@ -117,15 +114,12 @@ class InventarioApp:
                 messagebox.showerror("Error", f"No se pudo cargar el archivo: {e}")
 
     def guardar_csv(self):
-        if self.df is None:
+        if self.df is None or not self.archivo_actual:
             return
-        if not self.archivo_actual:
-            self.archivo_actual = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
-        if self.archivo_actual:
-            try:
-                self.df.to_csv(self.archivo_actual, index=False, encoding='latin1')
-            except Exception as e:
-                messagebox.showerror("Error", f"No se pudo guardar el archivo: {e}")
+        try:
+            self.df.to_csv(self.archivo_actual, index=False, encoding='latin1')
+        except Exception as e:
+            messagebox.showerror("Error", f"No se pudo guardar el archivo: {e}")
 
     def buscar_producto(self, event=None):
         if self.df is None:
@@ -134,10 +128,28 @@ class InventarioApp:
         self.lista_resultados.delete(0, tk.END)
         if query == "":
             return
-        exactos = self.df[self.df.iloc[:, 0].astype(str).str.lower() == query]
-        parciales = self.df[self.df.iloc[:, 1].astype(str).str.lower().str.contains(query)]
-        parciales = parciales[~parciales.index.isin(exactos.index)]
-        resultados = pd.concat([exactos, parciales])
+
+        resultados = pd.DataFrame()
+
+        # 1. Buscar por Código exacto (columna 0)
+        exacto_codigo = self.df[self.df.iloc[:, 0].astype(str).str.lower() == query]
+
+        # 2. Buscar por UPC/EAN (última columna)
+        if "UPC/EAN" in self.df.columns:
+            exacto_upc = self.df[self.df["UPC/EAN"].astype(str).str.lower() == query]
+        else:
+            exacto_upc = pd.DataFrame()
+
+        # 3. Buscar por nombre de producto (columna 1)
+        parcial_nombre = self.df[self.df.iloc[:, 1].astype(str).str.lower().str.contains(query)]
+
+        # Eliminar duplicados entre búsquedas
+        parcial_nombre = parcial_nombre[
+            ~parcial_nombre.index.isin(exacto_codigo.index) &
+            ~parcial_nombre.index.isin(exacto_upc.index)
+        ]
+
+        resultados = pd.concat([exacto_codigo, exacto_upc, parcial_nombre])
 
         for i, row in resultados.iterrows():
             display = f"{i} - {row[1]}"
@@ -148,7 +160,6 @@ class InventarioApp:
     def seleccionar_primer_resultado(self, event=None):
         if self.df is None:
             return
-
         query = self.entrada_busqueda.get().strip()
         if query == "":
             return
@@ -156,48 +167,43 @@ class InventarioApp:
         self.lista_resultados.delete(0, tk.END)
         self.texto_detalle.set("")
 
-        exactos = self.df[self.df.iloc[:, 0].astype(str).str.lower() == query.lower()]
+        df = self.df
+        idx = None
 
-        if not exactos.empty:
-            idx = exactos.index[0]
+        if not df.empty:
+            query_lower = query.lower()
+
+            if not df[df.iloc[:, 0].astype(str).str.lower() == query_lower].empty:
+                idx = df[df.iloc[:, 0].astype(str).str.lower() == query_lower].index[0]
+            elif "UPC/EAN" in df.columns and not df["UPC/EAN"][df["UPC/EAN"].astype(str).str.lower() == query_lower].empty:
+                idx = df[df["UPC/EAN"].astype(str).str.lower() == query_lower].index[0]
+            elif not df[df.iloc[:, 1].astype(str).str.lower().str.contains(query_lower)].empty:
+                idx = df[df.iloc[:, 1].astype(str).str.lower().str.contains(query_lower)].index[0]
+
+        if idx is not None:
             self.indice_actual = idx
             try:
-                codigo = self.df.at[idx, self.df.columns[0]]
+                codigo = df.at[idx, df.columns[0]]
                 self.contadores[codigo] = self.contadores.get(codigo, 0) + 1
-                anterior = int(self.df.at[idx, self.df.columns[3]])
+                anterior = int(df.at[idx, df.columns[3]])
                 self.historial_undo.append((idx, anterior))
-                self.df.at[idx, self.df.columns[3]] = anterior + 1
+                df.at[idx, df.columns[3]] = anterior + 1
                 self.guardar_csv()
-                fila = self.df.loc[idx]
+                fila = df.loc[idx]
                 self.actualizar_ultimo_producto(fila)
             except Exception as e:
                 messagebox.showerror("Error al sumar", str(e))
-        else:
-            try:
-                cantidad_str = self.entrada_cantidad.get()
-                cantidad = int(cantidad_str) if cantidad_str.strip() else 1
-            except ValueError:
-                messagebox.showerror("Error", "Cantidad inválida. Introduce un número entero.")
-                return
 
-            nuevo = [query if i in (0, 1) else ("FISICO" if i == 2 else cantidad if i == 3 else 0) for i in range(len(self.df.columns))]
-            self.df.loc[len(self.df)] = nuevo
-            self.guardar_csv()
-            self.indice_actual = self.df.index[-1]
-            fila = self.df.loc[self.indice_actual]
-            self.actualizar_ultimo_producto(fila)
-            messagebox.showinfo("Producto nuevo", f"Producto '{query}' agregado automáticamente.")
-
-        row = self.df.loc[self.indice_actual]
-        display = f"{self.indice_actual} - {row[1]}"
-        self.lista_resultados.insert(tk.END, display)
-        if row[0] in self.productos_modificados:
-            self.lista_resultados.itemconfig(tk.END, {'bg': '#d4edda'})
-        self.lista_resultados.selection_set(0)
-        self.lista_resultados.activate(0)
-        self.mostrar_detalles()
-        self.entrada_busqueda.focus_set()
-        self.entrada_busqueda.select_range(0, tk.END)
+            row = df.loc[idx]
+            display = f"{idx} - {row[1]}"
+            self.lista_resultados.insert(tk.END, display)
+            if row[0] in self.productos_modificados:
+                self.lista_resultados.itemconfig(tk.END, {'bg': '#d4edda'})
+            self.lista_resultados.selection_set(0)
+            self.lista_resultados.activate(0)
+            self.mostrar_detalles()
+            self.entrada_busqueda.focus_set()
+            self.entrada_busqueda.select_range(0, tk.END)
 
     def mostrar_detalles(self, event=None):
         if not self.lista_resultados.curselection():
@@ -283,14 +289,11 @@ class InventarioApp:
         if self.df is None:
             messagebox.showerror("Error", "Primero carga un archivo CSV.")
             return
-
         form = tk.Toplevel(self.root)
         form.title("Agregar nuevo producto")
         form.configure(bg="#d9ecff")
-
         labels = list(self.df.columns)
         entries = []
-
         for i, texto in enumerate(labels):
             tk.Label(form, text=texto, font=self.fuente, bg="#d9ecff").grid(row=i, column=0, padx=5, pady=5, sticky="w")
             entrada = tk.Entry(form, font=self.fuente, bg="#ffffff")
